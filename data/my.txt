@@ -1,0 +1,2 @@
+{"image_url":"http://img1.gtimg.com/fashion/pics/hv1/136/208/1896/123340576.png","image_file":"@/Users/megvii/Work/golang/hey/data/new_ben.jpg"}
+{"image_url":"http://img1.gtimg.com/fashion/pics/hv1/136/208/1896/123340576.png"}
