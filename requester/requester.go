@@ -172,9 +172,9 @@ func (b *Work) makeRequest(c *http.Client, p *RequestParam) {
 		if b.DisableOutput == false {
 			_, err := body.ReadFrom(resp.Body)
 			if err == nil {
-				fmt.Fprintln(b.writer(), body.String())
+				fmt.Fprintln(b.writer(), strings.TrimSpace(body.String()))
 			} else {
-				fmt.Fprintln(b.writer(), err.Error())
+				fmt.Fprintln(b.writer(), strings.TrimSpace(err.Error()))
 			}
 		}
 		io.Copy(ioutil.Discard, resp.Body)
