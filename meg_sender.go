@@ -62,10 +62,11 @@ var (
 	disableKeepAlives  = flag.Bool("disable-keepalive", false, "")
 	disableRedirects   = flag.Bool("disable-redirects", false, "")
 	disableOutput      = flag.Bool("disable-output", false, "")
+	enableRandom 	   = flag.Bool("enable-random", false, "")
 	proxyAddr          = flag.String("x", "", "")
 )
 
-var usage = `Usage: hey [options...] <url>
+var usage = `Usage: meg_sender [options...] <url>
 
 Options:
   -n  Number of requests to run. Default is 200.
@@ -95,9 +96,10 @@ Options:
                         connections between different HTTP requests.
   -disable-redirects    Disable following of HTTP redirects
   -disable-output       Disable response output.
+  -enable-random      	Enable random input.
   -cpus                 Number of used cpu cores.
                         (default for current machine is %d cores)
-  -dataType             POST data type, one of JSON, FORM, MULTIPART, OPTIONS.
+  -dataType             POST data type, one of JSON, DATA, OPTIONS.
   -more                 Provides information on DNS lookup, dialup, request and
                         response timings.
 `
@@ -224,6 +226,7 @@ func main() {
 		DisableCompression: *disableCompression,
 		DisableKeepAlives:  *disableKeepAlives,
 		DisableRedirects:   *disableRedirects,
+		EnableRandom:   	*enableRandom,
 		H2:                 *h2,
 		ProxyAddr:          proxyURL,
 		Output:             *output,

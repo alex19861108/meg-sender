@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math/rand"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptrace"
@@ -83,6 +84,9 @@ type Work struct {
 
 	// DisableRedirects is an option to prevent the following of HTTP redirects
 	DisableRedirects bool
+
+	// enable random data from input
+	EnableRandom bool
 
 	// Output represents the output type. If "csv" is provided, the
 	// output will be dumped as a csv stream.
@@ -233,7 +237,11 @@ func (b *Work) runWorker(n int) {
 
 func (b *Work) getRequestParam(idx int) RequestParam {
 	length := len(b.RequestParamSlice.RequestParams)
-	return b.RequestParamSlice.RequestParams[idx%length]
+	if (b.EnableRandom) {
+		return b.RequestParamSlice.RequestParams[rand.Intn(length)]
+	} else {
+		return b.RequestParamSlice.RequestParams[idx%length]
+	}
 }
 
 func (b *Work) runWorkers() {
