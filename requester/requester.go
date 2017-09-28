@@ -32,10 +32,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mohae/deepcopy"
 	"golang.org/x/net/http2"
 )
 
-const heyUA = "hey/0.0.1"
+const megSenderUA = "meg/0.0.1"
 
 type result struct {
 	err           error
@@ -85,8 +86,11 @@ type Work struct {
 	// DisableRedirects is an option to prevent the following of HTTP redirects
 	DisableRedirects bool
 
-	// enable random data from input
+	// EableRandom is an option to enable random data for input when input file has multi rows
 	EnableRandom bool
+
+	// enable parallel is an option to enable parallel in single cpu
+	EnableParallel bool
 
 	// Output represents the output type. If "csv" is provided, the
 	// output will be dumped as a csv stream.
@@ -117,9 +121,9 @@ func (b *Work) Run() {
 	// append hey's user agent
 	ua := b.Request.UserAgent()
 	if ua == "" {
-		ua = heyUA
+		ua = megSenderUA
 	} else {
-		ua += " " + heyUA
+		ua += " " + megSenderUA
 	}
 
 	b.results = make(chan *result, b.N)
@@ -226,18 +230,39 @@ func (b *Work) runWorker(n int) {
 			return http.ErrUseLastResponse
 		}
 	}
-	for i := 0; i < n; i++ {
-		if b.QPS > 0 {
-			<-throttle
+
+	if b.EnableParallel {
+		var wg sync.WaitGroup
+		wg.Add(n)
+		for i := 0; i < n; i++ {
+			if b.QPS > 0 {
+				<-throttle
+			}
+			requestParam := b.getRequestParam(i)
+			cli := deepcopy.Copy(*client)
+			cliObj, ok := cli.(http.Client)
+			if ok {
+				go func() {
+					b.makeRequest(&cliObj, &requestParam)
+					wg.Done()
+				}()
+			}
 		}
-		requestParam := b.getRequestParam(i)
-		b.makeRequest(client, &requestParam)
+		wg.Wait()
+	} else {
+		for i := 0; i < n; i++ {
+			if b.QPS > 0 {
+				<-throttle
+			}
+			requestParam := b.getRequestParam(i)
+			b.makeRequest(client, &requestParam)
+		}
 	}
 }
 
 func (b *Work) getRequestParam(idx int) RequestParam {
 	length := len(b.RequestParamSlice.RequestParams)
-	if (b.EnableRandom) {
+	if b.EnableRandom {
 		return b.RequestParamSlice.RequestParams[rand.Intn(length)]
 	} else {
 		return b.RequestParamSlice.RequestParams[idx%length]

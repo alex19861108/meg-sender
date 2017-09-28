@@ -62,7 +62,8 @@ var (
 	disableKeepAlives  = flag.Bool("disable-keepalive", false, "")
 	disableRedirects   = flag.Bool("disable-redirects", false, "")
 	disableOutput      = flag.Bool("disable-output", false, "")
-	enableRandom 	   = flag.Bool("enable-random", false, "")
+	enableRandom       = flag.Bool("enable-random", false, "")
+	enableParallel     = flag.Bool("enable-parallel", false, "")
 	proxyAddr          = flag.String("x", "", "")
 )
 
@@ -96,7 +97,8 @@ Options:
                         connections between different HTTP requests.
   -disable-redirects    Disable following of HTTP redirects
   -disable-output       Disable response output.
-  -enable-random      	Enable random input.
+  -enable-random      	Enable random input when input has multi rows.
+  -enable-parallel      Enable parallel for single cpu.
   -cpus                 Number of used cpu cores.
                         (default for current machine is %d cores)
   -dataType             POST data type, one of JSON, DATA, OPTIONS.
@@ -226,7 +228,8 @@ func main() {
 		DisableCompression: *disableCompression,
 		DisableKeepAlives:  *disableKeepAlives,
 		DisableRedirects:   *disableRedirects,
-		EnableRandom:   	*enableRandom,
+		EnableRandom:       *enableRandom,
+		EnableParallel:     *enableParallel,
 		H2:                 *h2,
 		ProxyAddr:          proxyURL,
 		Output:             *output,
