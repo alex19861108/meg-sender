@@ -54,7 +54,7 @@ type Work struct {
 	// Request is the request to be made.
 	Request *http.Request
 
-	RequestBody []byte
+	//RequestBody []byte
 
 	RequestParamSlice *RequestParamSlice
 
@@ -174,6 +174,7 @@ func (b *Work) makeRequest(c *http.Client, p *RequestParam) {
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
 	resp, err := c.Do(req)
 	if err == nil {
+		defer resp.Body.Close()
 		size = resp.ContentLength
 		code = resp.StatusCode
 		body := &bytes.Buffer{}
@@ -186,7 +187,8 @@ func (b *Work) makeRequest(c *http.Client, p *RequestParam) {
 			}
 		}
 		io.Copy(ioutil.Discard, resp.Body)
-		resp.Body.Close()
+	} else {
+		fmt.Fprintln(b.writer(), strings.TrimSpace(err.Error()))
 	}
 	t := time.Now()
 	resDuration = t.Sub(resStart)
@@ -204,10 +206,13 @@ func (b *Work) makeRequest(c *http.Client, p *RequestParam) {
 	}
 }
 
-func (b *Work) runWorker(n int) {
+/**
+	@param n	count to send
+*/
+func (b *Work) runWorker(n int, thread_count int) {
 	var throttle <-chan time.Time
 	if b.QPS > 0 {
-		throttle = time.Tick(time.Duration(1e6/(b.QPS)) * time.Microsecond)
+		throttle = time.Tick(time.Duration((1e6/(b.QPS)) * thread_count) * time.Microsecond)
 	}
 
 	tr := &http.Transport{
@@ -255,17 +260,25 @@ func (b *Work) runWorker(n int) {
 				<-throttle
 			}
 			requestParam := b.getRequestParam(i)
+			//fmt.Fprintln(b.writer(), "do request: " + strconv.Itoa(i))
 			b.makeRequest(client, &requestParam)
+			//fmt.Fprintln(b.writer(), "do request down: " + strconv.Itoa(i))
 		}
 	}
 }
 
 func (b *Work) getRequestParam(idx int) RequestParam {
 	length := len(b.RequestParamSlice.RequestParams)
-	if b.EnableRandom {
-		return b.RequestParamSlice.RequestParams[rand.Intn(length)]
+	if length > 0 {
+		if b.EnableRandom {
+			return b.RequestParamSlice.RequestParams[rand.Intn(length)]
+		} else {
+			return b.RequestParamSlice.RequestParams[idx%length]
+		}
 	} else {
-		return b.RequestParamSlice.RequestParams[idx%length]
+		return RequestParam {
+			Content: []byte(""),
+		};
 	}
 }
 
@@ -276,7 +289,7 @@ func (b *Work) runWorkers() {
 	// Ignore the case where b.N % b.C != 0.
 	for i := 0; i < b.C; i++ {
 		go func() {
-			b.runWorker(b.N / b.C)
+			b.runWorker(b.N/(b.C), b.C)
 			wg.Done()
 		}()
 	}
@@ -371,6 +384,8 @@ func cloneRequest(r *http.Request, p *RequestParam, t string) *http.Request {
 		r2.Body = ioutil.NopCloser(bytes.NewReader(body.Bytes()))
 		r2.ContentLength = int64(len(body.Bytes()))
 		r2.Header.Set("Content-Type", writer.FormDataContentType())
+	} else {
+		r2.Body = ioutil.NopCloser(bytes.NewReader(p.Content))
 	}
 
 	return r2

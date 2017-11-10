@@ -170,6 +170,10 @@ func main() {
 	var bodyAll []byte
 	if *body != "" {
 		bodyAll = []byte(*body)
+		param := requester.RequestParam{
+			Content: bodyAll,
+		}
+		requestParamSlice.RequestParams = append(requestParamSlice.RequestParams, param)
 	}
 	if *bodyFile != "" {
 		slurp, err := ioutil.ReadFile(*bodyFile)
@@ -178,7 +182,7 @@ func main() {
 		}
 		bodyAll = slurp
 
-		for _, row := range bytes.Split(slurp, []byte("\n")) {
+		for _, row := range bytes.Split(bodyAll, []byte("\n")) {
 			if !bytes.Equal(row, []byte("")) {
 				param := requester.RequestParam{
 					Content: row,
@@ -217,7 +221,7 @@ func main() {
 
 	w := &requester.Work{
 		Request:            req,
-		RequestBody:        bodyAll,
+		//RequestBody:        bodyAll,
 		RequestParamSlice:  requestParamSlice,
 		DataType:           dataType,
 		N:                  num,
