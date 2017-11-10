@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"math/rand"
@@ -31,6 +30,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"log"
 
 	"github.com/mohae/deepcopy"
 	"golang.org/x/net/http2"
@@ -118,6 +118,7 @@ func (b *Work) writer() io.Writer {
 // Run makes all the requests, prints the summary. It blocks until
 // all work is done.
 func (b *Work) Run() {
+	log.SetFlags(0)
 	// append hey's user agent
 	ua := b.Request.UserAgent()
 	if ua == "" {
@@ -181,14 +182,14 @@ func (b *Work) makeRequest(c *http.Client, p *RequestParam) {
 		if b.DisableOutput == false {
 			_, err := body.ReadFrom(resp.Body)
 			if err == nil {
-				fmt.Fprintln(b.writer(), strings.TrimSpace(body.String()))
+				log.Println(strings.TrimSpace(body.String()))
 			} else {
-				fmt.Fprintln(b.writer(), strings.TrimSpace(err.Error()))
+				log.Println(strings.TrimSpace(err.Error()))
 			}
 		}
 		io.Copy(ioutil.Discard, resp.Body)
 	} else {
-		fmt.Fprintln(b.writer(), strings.TrimSpace(err.Error()))
+		log.Println(strings.TrimSpace(err.Error()))
 	}
 	t := time.Now()
 	resDuration = t.Sub(resStart)
@@ -260,9 +261,7 @@ func (b *Work) runWorker(n int, thread_count int) {
 				<-throttle
 			}
 			requestParam := b.getRequestParam(i)
-			//fmt.Fprintln(b.writer(), "do request: " + strconv.Itoa(i))
 			b.makeRequest(client, &requestParam)
-			//fmt.Fprintln(b.writer(), "do request down: " + strconv.Itoa(i))
 		}
 	}
 }
@@ -330,7 +329,7 @@ func cloneRequest(r *http.Request, p *RequestParam, t string) *http.Request {
 		var obj map[string]string
 		err := json.Unmarshal([]byte(p.Content), &obj)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			log.Fatal(err.Error())
 			return nil
 		}
 		filesMap := make(map[string]string)
@@ -350,14 +349,14 @@ func cloneRequest(r *http.Request, p *RequestParam, t string) *http.Request {
 			for key, path := range filesMap {
 				file, err := os.Open(path)
 				if err != nil {
-					fmt.Fprintln(os.Stderr, err.Error())
+					log.Fatal(err.Error())
 					continue
 				}
 				defer file.Close()
 
 				part, err := writer.CreateFormFile(key, path)
 				if err != nil {
-					fmt.Fprintln(os.Stderr, err.Error())
+					log.Fatal(err.Error())
 					continue
 				}
 				_, err = io.Copy(part, file)
@@ -371,10 +370,9 @@ func cloneRequest(r *http.Request, p *RequestParam, t string) *http.Request {
 		writer.Close()
 
 		/**
-		//fmt.Fprintln(os.Stderr, body)
 		req, err := http.NewRequest("POST", r.URL.String(), body)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
+			log.Fatal(err.Error())
 		}
 		req.Header.Set("Content-Type", writer.FormDataContentType())
 			return req
