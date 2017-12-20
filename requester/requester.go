@@ -182,7 +182,7 @@ func (b *Work) makeRequest(c *http.Client, p *RequestParam) {
 		if b.DisableOutput == false {
 			_, err := body.ReadFrom(resp.Body)
 			if err == nil {
-				log.Println(strings.TrimSpace(body.String()))
+				log.Printf("%s\t%s\n", strings.TrimSpace(string(p.Content)), strings.TrimSpace(body.String()))
 			} else {
 				log.Println(strings.TrimSpace(err.Error()))
 			}
