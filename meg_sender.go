@@ -16,7 +16,7 @@
 package main
 
 import (
-	"./requester"
+	"github.com/alex19861108/meg-sender/requester"
 	"bytes"
 	"flag"
 	"fmt"
