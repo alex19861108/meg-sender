@@ -289,10 +289,10 @@ func (b *Work) runWorkers() {
 
 	// Ignore the case where b.N % b.C != 0.
 	for i := 0; i < b.C; i++ {
-		go func() {
+		go func(i int) {
 			b.runWorker(b.N/(b.C), b.C, i)
-			wg.Done()
-		}()
+			defer wg.Done()
+		}(i)
 	}
 	wg.Wait()
 }
