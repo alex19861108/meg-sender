@@ -210,7 +210,7 @@ func (b *Work) makeRequest(c *http.Client, p *RequestParam) {
 /**
 	@param n	count to send
 */
-func (b *Work) runWorker(n int, thread_count int) {
+func (b *Work) runWorker(n int, thread_count int, id int) {
 	var throttle <-chan time.Time
 	if b.QPS > 0 {
 		throttle = time.Tick(time.Duration((1e6/(b.QPS)) * thread_count) * time.Microsecond)
@@ -244,7 +244,8 @@ func (b *Work) runWorker(n int, thread_count int) {
 			if b.QPS > 0 {
 				<-throttle
 			}
-			requestParam := b.getRequestParam(i)
+			idx := i * thread_count + id
+			requestParam := b.getRequestParam(idx)
 			cli := deepcopy.Copy(*client)
 			cliObj, ok := cli.(http.Client)
 			if ok {
@@ -260,7 +261,8 @@ func (b *Work) runWorker(n int, thread_count int) {
 			if b.QPS > 0 {
 				<-throttle
 			}
-			requestParam := b.getRequestParam(i)
+			idx := i * thread_count + id
+			requestParam := b.getRequestParam(idx)
 			b.makeRequest(client, &requestParam)
 		}
 	}
@@ -272,7 +274,7 @@ func (b *Work) getRequestParam(idx int) RequestParam {
 		if b.EnableRandom {
 			return b.RequestParamSlice.RequestParams[rand.Intn(length)]
 		} else {
-			return b.RequestParamSlice.RequestParams[idx%length]
+			return b.RequestParamSlice.RequestParams[(idx)%length]
 		}
 	} else {
 		return RequestParam {
@@ -288,7 +290,7 @@ func (b *Work) runWorkers() {
 	// Ignore the case where b.N % b.C != 0.
 	for i := 0; i < b.C; i++ {
 		go func() {
-			b.runWorker(b.N/(b.C), b.C)
+			b.runWorker(b.N/(b.C), b.C, i)
 			wg.Done()
 		}()
 	}
