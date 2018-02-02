@@ -118,7 +118,6 @@ func (b *Work) writer() io.Writer {
 // Run makes all the requests, prints the summary. It blocks until
 // all work is done.
 func (b *Work) Run() {
-	log.SetFlags(0)
 	// append hey's user agent
 	ua := b.Request.UserAgent()
 	if ua == "" {
@@ -184,12 +183,14 @@ func (b *Work) makeRequest(c *http.Client, p *RequestParam) {
 			if err == nil {
 				log.Printf("%s\t%s\n", strings.TrimSpace(string(p.Content)), strings.TrimSpace(body.String()))
 			} else {
-				log.Println(strings.TrimSpace(err.Error()))
+				log.Printf("[Error] %s\n", strings.TrimSpace(err.Error()))
+				return
 			}
 		}
 		io.Copy(ioutil.Discard, resp.Body)
 	} else {
-		log.Println(strings.TrimSpace(err.Error()))
+		log.Printf("[Error] %s\n", strings.TrimSpace(err.Error()))
+		return
 	}
 	t := time.Now()
 	resDuration = t.Sub(resStart)
@@ -217,8 +218,8 @@ func (b *Work) runWorker(n int, thread_count int, id int) {
 	}
 
 	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
+		TLSClientConfig: &tls.Config {
+			InsecureSkipVerify: false,
 		},
 		DisableCompression: b.DisableCompression,
 		DisableKeepAlives:  b.DisableKeepAlives,
@@ -327,7 +328,7 @@ func cloneRequest(r *http.Request, p *RequestParam, t string) *http.Request {
 	}
 	if strings.ToUpper(t) == "JSON" {
 		r2.Body = ioutil.NopCloser(bytes.NewReader(p.Content))
-	} else if strings.ToUpper(t) == "DATA" {
+	} else if strings.ToUpper(t) == "FORM" {
 		var obj map[string]string
 		err := json.Unmarshal([]byte(p.Content), &obj)
 		if err != nil {
@@ -389,4 +390,8 @@ func cloneRequest(r *http.Request, p *RequestParam, t string) *http.Request {
 	}
 
 	return r2
+}
+
+func init() {
+	log.SetFlags(0)
 }
