@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Command hey is an HTTP load generator.
+// Command meg_sender is an HTTP load generator.
 package main
 
 import (
-	"github.com/alex19861108/meg-sender/requester"
 	"bytes"
 	"flag"
 	"fmt"
+	"github.com/alex19861108/meg-sender/requester"
 	"io/ioutil"
 	"net/http"
 	gourl "net/url"
@@ -45,17 +45,15 @@ var (
 	contentType = flag.String("T", "text/html", "")
 	authHeader  = flag.String("a", "", "")
 	hostHeader  = flag.String("host", "", "")
-	dataType    = flag.String("dataType", "JSON", "")
+	dataType    = flag.String("data-type", "JSON", "")
+	output      = flag.String("o", "", "")
 
-	output = flag.String("o", "", "")
+	qps = flag.Int("qps", 0, "")
+	c   = flag.Int("c", 50, "")
+	n   = flag.Int("n", 200, "")
+	t   = flag.Int("t", 60, "")
 
-	c = flag.Int("c", 50, "")
-	n = flag.Int("n", 200, "")
-	q = flag.Int("q", 0, "")
-	t = flag.Int("t", 60, "")
-
-	h2 = flag.Bool("h2", false, "")
-
+	h2   = flag.Bool("h2", false, "")
 	cpus = flag.Int("cpus", runtime.GOMAXPROCS(-1), "")
 
 	disableCompression = flag.Bool("disable-compression", false, "")
@@ -73,7 +71,6 @@ Options:
   -n  Number of requests to run. Default is 200.
   -c  Number of requests to run concurrently. Total number of requests cannot
       be smaller than the concurrency level. Default is 50.
-  -q  Rate limit, in seconds (QPS).
   -o  Output type. If none provided, a summary is printed.
       "csv" is the only supported alternative. Dumps the response
       metrics in comma-separated values format.
@@ -90,7 +87,11 @@ Options:
   -x  HTTP Proxy address as host:port.
   -h2 Enable HTTP/2.
 
-  -host	HTTP Host header.
+  -data-type            POST data type, one of JSON, FORM, OPTIONS.
+  -qps  				Rate limit, in seconds (QPS).
+  -host					HTTP Host header.
+  -cpus                 Number of used cpu cores.
+                        (default for current machine is %d cores)
 
   -disable-compression  Disable compression.
   -disable-keepalive    Disable keep-alive, prevents re-use of TCP
@@ -99,9 +100,6 @@ Options:
   -disable-output       Disable response output.
   -enable-random      	Enable random input when input has multi rows.
   -enable-parallel      Enable parallel for single cpu.
-  -cpus                 Number of used cpu cores.
-                        (default for current machine is %d cores)
-  -dataType             POST data type, one of JSON, DATA, OPTIONS.
   -more                 Provides information on DNS lookup, dialup, request and
                         response timings.
 `
@@ -122,7 +120,7 @@ func main() {
 	runtime.GOMAXPROCS(*cpus)
 	num := *n
 	conc := *c
-	q := *q
+	qps := *qps
 
 	if num <= 0 || conc <= 0 {
 		usageAndExit("-n and -c cannot be smaller than 1.")
@@ -220,13 +218,13 @@ func main() {
 	}
 
 	w := &requester.Work{
-		Request:            req,
+		Request: req,
 		//RequestBody:        bodyAll,
 		RequestParamSlice:  requestParamSlice,
 		DataType:           dataType,
 		N:                  num,
 		C:                  conc,
-		QPS:                q,
+		QPS:                qps,
 		Timeout:            *t,
 		DisableOutput:      *disableOutput,
 		DisableCompression: *disableCompression,

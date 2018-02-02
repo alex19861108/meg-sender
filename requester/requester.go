@@ -219,7 +219,7 @@ func (b *Work) runWorker(n int, thread_count int, id int) {
 
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config {
-			InsecureSkipVerify: false,
+			InsecureSkipVerify: true,
 		},
 		DisableCompression: b.DisableCompression,
 		DisableKeepAlives:  b.DisableKeepAlives,
