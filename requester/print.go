@@ -44,8 +44,8 @@ type report struct {
 	resLats   []float64
 	delayLats []float64
 
-	results chan *result
-	total   time.Duration
+	results  chan *result
+	timeUsed time.Duration
 
 	errorDist      map[string]int
 	statusCodeDist map[int]int
@@ -54,51 +54,70 @@ type report struct {
 
 	output string
 
-	w io.Writer
+	w         io.Writer
+	exit      bool
+	startTime time.Time
 }
 
-func newReport(w io.Writer, size int, results chan *result, output string, total time.Duration) *report {
+func newReport(w io.Writer, results chan *result, output string) *report {
 	return &report{
+		w:              w,
 		output:         output,
 		results:        results,
-		total:          total,
 		statusCodeDist: make(map[int]int),
 		errorDist:      make(map[string]int),
-		w:              w,
+		exit:           false,
 	}
 }
 
-func (r *report) finalize() {
-	for res := range r.results {
-		if res.err != nil {
-			r.errorDist[res.err.Error()]++
-		} else {
-			r.lats = append(r.lats, res.duration.Seconds())
-			r.avgTotal += res.duration.Seconds()
-			r.avgConn += res.connDuration.Seconds()
-			r.avgDelay += res.delayDuration.Seconds()
-			r.avgDNS += res.dnsDuration.Seconds()
-			r.avgReq += res.reqDuration.Seconds()
-			r.avgRes += res.resDuration.Seconds()
-			r.connLats = append(r.connLats, res.connDuration.Seconds())
-			r.dnsLats = append(r.dnsLats, res.dnsDuration.Seconds())
-			r.reqLats = append(r.reqLats, res.reqDuration.Seconds())
-			r.delayLats = append(r.delayLats, res.delayDuration.Seconds())
-			r.resLats = append(r.resLats, res.resDuration.Seconds())
-			r.statusCodeDist[res.statusCode]++
-			if res.contentLength > 0 {
-				r.sizeTotal += res.contentLength
+func (r *report) start() {
+	r.startTime = time.Now()
+	go func() {
+		for !r.exit {
+			select {
+			case res, hasMore := <-r.results:
+				if !hasMore {
+					break
+				}
+				if res.err != nil {
+					r.errorDist[res.err.Error()]++
+				} else {
+					r.lats = append(r.lats, res.duration.Seconds())
+					r.avgTotal += res.duration.Seconds()
+					r.avgConn += res.connDuration.Seconds()
+					r.avgDelay += res.delayDuration.Seconds()
+					r.avgDNS += res.dnsDuration.Seconds()
+					r.avgReq += res.reqDuration.Seconds()
+					r.avgRes += res.resDuration.Seconds()
+					r.connLats = append(r.connLats, res.connDuration.Seconds())
+					r.dnsLats = append(r.dnsLats, res.dnsDuration.Seconds())
+					r.reqLats = append(r.reqLats, res.reqDuration.Seconds())
+					r.delayLats = append(r.delayLats, res.delayDuration.Seconds())
+					r.resLats = append(r.resLats, res.resDuration.Seconds())
+					r.statusCodeDist[res.statusCode]++
+					if res.contentLength > 0 {
+						r.sizeTotal += res.contentLength
+					}
+				}
 			}
 		}
-	}
-	r.rps = float64(len(r.lats)) / r.total.Seconds()
+	}()
+}
+
+func (r *report) stop() {
+	r.exit = true
+	r.timeUsed = time.Now().Sub(r.startTime)
+	time.Sleep(time.Microsecond)
+
+	r.rps = float64(len(r.lats)) / r.timeUsed.Seconds()
 	r.average = r.avgTotal / float64(len(r.lats))
 	r.avgConn = r.avgConn / float64(len(r.lats))
 	r.avgDelay = r.avgDelay / float64(len(r.lats))
 	r.avgDNS = r.avgDNS / float64(len(r.lats))
 	r.avgReq = r.avgReq / float64(len(r.lats))
 	r.avgRes = r.avgRes / float64(len(r.lats))
-	r.print()
+
+	r.finalize()
 }
 
 func (r *report) printCSV() {
@@ -109,7 +128,7 @@ func (r *report) printCSV() {
 	}
 }
 
-func (r *report) print() {
+func (r *report) finalize() {
 	if r.output == "csv" {
 		r.printCSV()
 		return
@@ -120,7 +139,7 @@ func (r *report) print() {
 		r.fastest = r.lats[0]
 		r.slowest = r.lats[len(r.lats)-1]
 		r.printf("\nSummary:\n")
-		r.printf("  Total:\t%4.4f secs\n", r.total.Seconds())
+		r.printf("  Total:\t%4.4f secs\n", r.timeUsed.Seconds())
 		r.printf("  Slowest:\t%4.4f secs\n", r.slowest)
 		r.printf("  Fastest:\t%4.4f secs\n", r.fastest)
 		r.printf("  Average:\t%4.4f secs\n", r.average)

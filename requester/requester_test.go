@@ -123,10 +123,10 @@ func TestBody(t *testing.T) {
 
 	req, _ := http.NewRequest("POST", server.URL, bytes.NewBuffer([]byte("Body")))
 	w := &Work{
-		Request:     req,
-		RequestBody: []byte("Body"),
-		N:           10,
-		C:           1,
+		Request: req,
+		//RequestBody: []byte("Body"),
+		N: 10,
+		C: 1,
 	}
 	w.Run()
 	if count != 10 {

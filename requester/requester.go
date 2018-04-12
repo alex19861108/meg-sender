@@ -30,7 +30,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"log"
+
+	log "github.com/sirupsen/logrus"
 
 	"github.com/mohae/deepcopy"
 	"golang.org/x/net/http2"
@@ -72,7 +73,9 @@ type Work struct {
 	H2 bool
 
 	// Timeout in seconds.
-	Timeout int
+	SingleRequestTimeout time.Duration
+	// Timeout in seconds
+	PerformanceTimeout time.Duration
 
 	// Qps is the rate limit.
 	QPS int
@@ -86,11 +89,11 @@ type Work struct {
 	// DisableRedirects is an option to prevent the following of HTTP redirects
 	DisableRedirects bool
 
-	// EableRandom is an option to enable random data for input when input file has multi rows
-	EnableRandom bool
+	// RandomInput is an option to enable random data for input when input file has multi rows
+	RandomInput bool
 
-	// enable parallel is an option to enable parallel in single cpu
-	EnableParallel bool
+	// send requests synchronous in single worker
+	Async bool
 
 	// Output represents the output type. If "csv" is provided, the
 	// output will be dumped as a csv stream.
@@ -103,9 +106,11 @@ type Work struct {
 	// Writer is where results will be written. If nil, results are written to stdout.
 	Writer io.Writer
 
-	results chan *result
-	stopCh  chan struct{}
-	start   time.Time
+	results   chan *result
+	stopCh    chan struct{}
+	startTime time.Time
+
+	report *report
 }
 
 func (b *Work) writer() io.Writer {
@@ -126,9 +131,11 @@ func (b *Work) Run() {
 		ua += " " + megSenderUA
 	}
 
-	b.results = make(chan *result, b.N)
+	b.results = make(chan *result)
 	b.stopCh = make(chan struct{}, 1000)
-	b.start = time.Now()
+	b.startTime = time.Now()
+	b.report = newReport(b.writer(), b.results, b.Output)
+	b.report.start()
 
 	b.runWorkers()
 	b.Finish()
@@ -137,7 +144,8 @@ func (b *Work) Run() {
 func (b *Work) Finish() {
 	b.stopCh <- struct{}{}
 	close(b.results)
-	newReport(b.writer(), b.N, b.results, b.Output, time.Now().Sub(b.start)).finalize()
+
+	b.report.stop()
 }
 
 func (b *Work) makeRequest(c *http.Client, p *RequestParam) {
@@ -181,15 +189,15 @@ func (b *Work) makeRequest(c *http.Client, p *RequestParam) {
 		if b.DisableOutput == false {
 			_, err := body.ReadFrom(resp.Body)
 			if err == nil {
-				log.Printf("%s\t%s\n", strings.TrimSpace(string(p.Content)), strings.TrimSpace(body.String()))
+				log.Infof("%s\t%s", strings.TrimSpace(string(p.Content)), strings.TrimSpace(body.String()))
 			} else {
-				log.Printf("[Error] %s\n", strings.TrimSpace(err.Error()))
+				log.Errorln(err)
 				return
 			}
 		}
 		io.Copy(ioutil.Discard, resp.Body)
 	} else {
-		log.Printf("[Error] %s\n", strings.TrimSpace(err.Error()))
+		log.Errorln(err)
 		return
 	}
 	t := time.Now()
@@ -208,17 +216,15 @@ func (b *Work) makeRequest(c *http.Client, p *RequestParam) {
 	}
 }
 
-/**
-	@param n	count to send
-*/
-func (b *Work) runWorker(n int, thread_count int, id int) {
+// @param n	count to send
+func (b *Work) runWorker(n int, widx int) {
 	var throttle <-chan time.Time
 	if b.QPS > 0 {
-		throttle = time.Tick(time.Duration((1e6/(b.QPS)) * thread_count) * time.Microsecond)
+		throttle = time.Tick(time.Duration((1e6/(b.QPS))*b.C) * time.Microsecond)
 	}
 
 	tr := &http.Transport{
-		TLSClientConfig: &tls.Config {
+		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
 		},
 		DisableCompression: b.DisableCompression,
@@ -231,56 +237,112 @@ func (b *Work) runWorker(n int, thread_count int, id int) {
 		tr.TLSNextProto = make(map[string]func(string, *tls.Conn) http.RoundTripper)
 	}
 
-	client := &http.Client{Transport: tr, Timeout: time.Duration(b.Timeout) * time.Second}
+	client := &http.Client{Transport: tr, Timeout: b.SingleRequestTimeout}
 	if b.DisableRedirects {
 		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
 	}
 
-	if b.EnableParallel {
-		var wg sync.WaitGroup
-		wg.Add(n)
-		for i := 0; i < n; i++ {
-			if b.QPS > 0 {
-				<-throttle
-			}
-			idx := i * thread_count + id
-			requestParam := b.getRequestParam(idx)
-			cli := deepcopy.Copy(*client)
-			cliObj, ok := cli.(http.Client)
-			if ok {
-				go func() {
-					b.makeRequest(&cliObj, &requestParam)
-					wg.Done()
-				}()
+	if b.Async {
+		// async
+		cli := deepcopy.Copy(*client)
+		cliObj, ok := cli.(http.Client)
+		if ok {
+			if n > 0 {
+				b.asyncSendN(widx, n, throttle, cliObj)
+			} else {
+				b.asyncSend(throttle, cliObj)
 			}
 		}
-		wg.Wait()
 	} else {
-		for i := 0; i < n; i++ {
-			if b.QPS > 0 {
-				<-throttle
+		// sync
+		cli := deepcopy.Copy(*client)
+		cliObj, ok := cli.(http.Client)
+		if ok {
+			if n > 0 {
+				b.syncSendN(widx, n, throttle, cliObj)
+			} else {
+				b.syncSend(throttle, cliObj)
 			}
-			idx := i * thread_count + id
-			requestParam := b.getRequestParam(idx)
-			b.makeRequest(client, &requestParam)
 		}
 	}
+}
+
+// sync send n
+func (b *Work) syncSendN(widx int, n int, throttle <-chan time.Time, client http.Client) {
+	for i := 0; i < n; i++ {
+		if b.QPS > 0 {
+			<-throttle
+		}
+		requestParam := b.getRequestParam(i*b.C + widx)
+		b.makeRequest(&client, &requestParam)
+	}
+}
+
+// sync send
+func (b *Work) syncSend(throttle <-chan time.Time, client http.Client) {
+	for i := 0; ; i++ {
+		if time.Now().Sub(b.startTime) > b.PerformanceTimeout {
+			break
+		}
+		if b.QPS > 0 {
+			<-throttle
+		}
+		requestParam := b.getRequestParam(i)
+		b.makeRequest(&client, &requestParam)
+	}
+}
+
+// async send by count
+func (b *Work) asyncSendN(widx int, n int, throttle <-chan time.Time, client http.Client) {
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		if b.QPS > 0 {
+			<-throttle
+		}
+		requestParam := b.getRequestParam(i*b.C + widx)
+		go func() {
+			b.makeRequest(&client, &requestParam)
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+}
+
+// async send by time
+func (b *Work) asyncSend(throttle <-chan time.Time, client http.Client) {
+	var wg sync.WaitGroup
+	for i := 0; ; i++ {
+		if time.Now().Sub(b.startTime) > b.PerformanceTimeout {
+			break
+		}
+		wg.Add(1)
+		if b.QPS > 0 {
+			<-throttle
+		}
+		requestParam := b.getRequestParam(i)
+		go func() {
+			b.makeRequest(&client, &requestParam)
+			wg.Done()
+		}()
+	}
+	wg.Wait()
 }
 
 func (b *Work) getRequestParam(idx int) RequestParam {
 	length := len(b.RequestParamSlice.RequestParams)
 	if length > 0 {
-		if b.EnableRandom {
+		if b.RandomInput {
 			return b.RequestParamSlice.RequestParams[rand.Intn(length)]
 		} else {
 			return b.RequestParamSlice.RequestParams[(idx)%length]
 		}
 	} else {
-		return RequestParam {
+		return RequestParam{
 			Content: []byte(""),
-		};
+		}
 	}
 }
 
@@ -288,10 +350,9 @@ func (b *Work) runWorkers() {
 	var wg sync.WaitGroup
 	wg.Add(b.C)
 
-	// Ignore the case where b.N % b.C != 0.
 	for i := 0; i < b.C; i++ {
 		go func(i int) {
-			b.runWorker(b.N/(b.C), b.C, i)
+			b.runWorker(b.N/(b.C), i)
 			defer wg.Done()
 		}(i)
 	}
@@ -338,8 +399,8 @@ func cloneRequest(r *http.Request, p *RequestParam, t string) *http.Request {
 		filesMap := make(map[string]string)
 		dataMap := make(map[string]string)
 		for key, val := range obj {
-			startswith := strings.HasPrefix(val, "@")
-			if startswith == true {
+			startWithAt := strings.HasPrefix(val, "@")
+			if startWithAt == true {
 				filesMap[key] = val[1:]
 			} else {
 				dataMap[key] = val
@@ -393,5 +454,7 @@ func cloneRequest(r *http.Request, p *RequestParam, t string) *http.Request {
 }
 
 func init() {
-	log.SetFlags(0)
+	customFormatter := new(log.TextFormatter)
+	customFormatter.DisableTimestamp = true
+	log.SetFormatter(customFormatter)
 }

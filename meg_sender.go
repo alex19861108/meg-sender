@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"github.com/alex19861108/meg-sender/requester"
 	"io/ioutil"
 	"net/http"
 	gourl "net/url"
@@ -28,7 +27,11 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+
+	"github.com/alex19861108/meg-sender/requester"
 	//"github.com/rakyll/hey/requester"
+
+	"time"
 )
 
 const (
@@ -42,16 +45,17 @@ var (
 	body        = flag.String("d", "", "")
 	bodyFile    = flag.String("D", "", "")
 	accept      = flag.String("A", "", "")
-	contentType = flag.String("T", "text/html", "")
+	contentType = flag.String("C", "text/html", "")
 	authHeader  = flag.String("a", "", "")
 	hostHeader  = flag.String("host", "", "")
-	dataType    = flag.String("data-type", "JSON", "")
+	dataType    = flag.String("f", "FORM", "")
 	output      = flag.String("o", "", "")
 
 	qps = flag.Int("qps", 0, "")
 	c   = flag.Int("c", 50, "")
-	n   = flag.Int("n", 200, "")
-	t   = flag.Int("t", 60, "")
+	n   = flag.Int("n", 0, "")
+	T   = flag.Int("T", 60, "")
+	t   = flag.Int("t", 0, "")
 
 	h2   = flag.Bool("h2", false, "")
 	cpus = flag.Int("cpus", runtime.GOMAXPROCS(-1), "")
@@ -60,36 +64,38 @@ var (
 	disableKeepAlives  = flag.Bool("disable-keepalive", false, "")
 	disableRedirects   = flag.Bool("disable-redirects", false, "")
 	disableOutput      = flag.Bool("disable-output", false, "")
-	enableRandom       = flag.Bool("enable-random", false, "")
-	enableParallel     = flag.Bool("enable-parallel", false, "")
+	randomInput        = flag.Bool("random-input", false, "")
+	async              = flag.Bool("async", false, "")
 	proxyAddr          = flag.String("x", "", "")
 )
 
 var usage = `Usage: meg_sender [options...] <url>
 
 Options:
-  -n  Number of requests to run. Default is 200.
-  -c  Number of requests to run concurrently. Total number of requests cannot
-      be smaller than the concurrency level. Default is 50.
-  -o  Output type. If none provided, a summary is printed.
-      "csv" is the only supported alternative. Dumps the response
-      metrics in comma-separated values format.
+  -m    HTTP method, one of GET, POST, PUT, DELETE, HEAD, OPTIONS. Default is [GET].
+  -qps  Rate limit, in seconds (QPS). If not set, send request one by one.
+  -n    Number of requests to run. Default is [0].
+  -t    Timeout for all request in seconds. Default is [0].
 
-  -m  HTTP method, one of GET, POST, PUT, DELETE, HEAD, OPTIONS.
-  -H  Custom HTTP header. You can specify as many as needed by repeating the flag.
-      For example, -H "Accept: text/html" -H "Content-Type: application/xml" .
-  -t  Timeout for each request in seconds. Default is 60, use 0 for infinite.
-  -A  HTTP Accept header.
-  -d  HTTP request body.
-  -D  HTTP request body from file. For example, /home/user/file.txt or ./file.txt.
-  -T  Content-type, defaults to "text/html".
-  -a  Basic authentication, username:password.
-  -x  HTTP Proxy address as host:port.
-  -h2 Enable HTTP/2.
+  -f    POST data type, one of JSON, FORM, OPTIONS.
 
-  -data-type            POST data type, one of JSON, FORM, OPTIONS.
-  -qps  				Rate limit, in seconds (QPS).
-  -host					HTTP Host header.
+  -c    Number of concurrent workers to run. Total number of requests cannot
+        be smaller than the concurrency level. Default is [50].
+  -H    Custom HTTP header. You can specify as many as needed by repeating the flag.
+        For example, -H "Accept: text/html" -H "Content-Type: application/xml" .
+  -T    Timeout for each request in seconds. Default is 60, use 0 for infinite.
+  -A    HTTP Accept header.
+  -d    HTTP request body.
+  -D    HTTP request body from file. For example, /home/user/file.txt or ./file.txt.
+  -C    Content-type, defaults to "text/html".
+  -a    Basic authentication, username:password.
+  -x    HTTP Proxy address as host:port.
+  -h2   Enable HTTP/2.
+  -o    Output type. If none provided, a summary is printed.
+        "csv" is the only supported alternative. Dumps the response
+        metrics in comma-separated values format.
+
+  -host                 HTTP Host header.
   -cpus                 Number of used cpu cores.
                         (default for current machine is %d cores)
 
@@ -98,8 +104,9 @@ Options:
                         connections between different HTTP requests.
   -disable-redirects    Disable following of HTTP redirects
   -disable-output       Disable response output.
-  -enable-random      	Enable random input when input has multi rows.
-  -enable-parallel      Enable parallel for single cpu.
+  -random-input         Enable random input when input has multi rows.
+  -async                Enable send requests asynchronously in single worker.
+
   -more                 Provides information on DNS lookup, dialup, request and
                         response timings.
 `
@@ -122,11 +129,18 @@ func main() {
 	conc := *c
 	qps := *qps
 
-	if num <= 0 || conc <= 0 {
-		usageAndExit("-n and -c cannot be smaller than 1.")
+	if conc <= 0 {
+		usageAndExit("-c cannot be smaller than 1.")
 	}
 
-	if num < conc {
+	if num <= 0 && *t <= 0 {
+		usageAndExit("-n and -t cannot be 0 at the same time.")
+	}
+	if num > 0 && *t > 0 {
+		usageAndExit("-n and -t cannot be not 0 at the same time.")
+	}
+
+	if num > 0 && num < conc {
 		usageAndExit("-n cannot be less than -c.")
 	}
 
@@ -220,21 +234,22 @@ func main() {
 	w := &requester.Work{
 		Request: req,
 		//RequestBody:        bodyAll,
-		RequestParamSlice:  requestParamSlice,
-		DataType:           dataType,
-		N:                  num,
-		C:                  conc,
-		QPS:                qps,
-		Timeout:            *t,
-		DisableOutput:      *disableOutput,
-		DisableCompression: *disableCompression,
-		DisableKeepAlives:  *disableKeepAlives,
-		DisableRedirects:   *disableRedirects,
-		EnableRandom:       *enableRandom,
-		EnableParallel:     *enableParallel,
-		H2:                 *h2,
-		ProxyAddr:          proxyURL,
-		Output:             *output,
+		RequestParamSlice:    requestParamSlice,
+		DataType:             dataType,
+		N:                    num,
+		C:                    conc,
+		QPS:                  qps,
+		SingleRequestTimeout: time.Duration(*T) * time.Second,
+		PerformanceTimeout:   time.Duration(*t) * time.Second,
+		DisableOutput:        *disableOutput,
+		DisableCompression:   *disableCompression,
+		DisableKeepAlives:    *disableKeepAlives,
+		DisableRedirects:     *disableRedirects,
+		RandomInput:          *randomInput,
+		Async:                *async,
+		H2:                   *h2,
+		ProxyAddr:            proxyURL,
+		Output:               *output,
 	}
 
 	c := make(chan os.Signal, 1)
