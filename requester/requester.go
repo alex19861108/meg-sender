@@ -31,8 +31,6 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/sirupsen/logrus"
-
 	"github.com/mohae/deepcopy"
 	"golang.org/x/net/http2"
 )
@@ -189,15 +187,15 @@ func (b *Work) makeRequest(c *http.Client, p *RequestParam) {
 		if b.DisableOutput == false {
 			_, err := body.ReadFrom(resp.Body)
 			if err == nil {
-				log.Infof("%s\t%s", strings.TrimSpace(string(p.Content)), strings.TrimSpace(body.String()))
+				Info.Printf("%s\t%d\t%s\n", strings.TrimSpace(string(p.Content)), code, strings.TrimSpace(body.String()))
 			} else {
-				log.Errorln(err)
+				Error.Println(err)
 				return
 			}
 		}
 		io.Copy(ioutil.Discard, resp.Body)
 	} else {
-		log.Errorln(err)
+		Error.Println(err)
 		return
 	}
 	t := time.Now()
@@ -393,7 +391,7 @@ func cloneRequest(r *http.Request, p *RequestParam, t string) *http.Request {
 		var obj map[string]string
 		err := json.Unmarshal([]byte(p.Content), &obj)
 		if err != nil {
-			log.Fatal(err.Error())
+			Error.Println(err)
 			return nil
 		}
 		filesMap := make(map[string]string)
@@ -413,14 +411,14 @@ func cloneRequest(r *http.Request, p *RequestParam, t string) *http.Request {
 			for key, path := range filesMap {
 				file, err := os.Open(path)
 				if err != nil {
-					log.Fatal(err.Error())
+					Error.Println(err)
 					continue
 				}
 				defer file.Close()
 
 				part, err := writer.CreateFormFile(key, path)
 				if err != nil {
-					log.Fatal(err.Error())
+					Error.Println(err)
 					continue
 				}
 				_, err = io.Copy(part, file)
@@ -454,7 +452,4 @@ func cloneRequest(r *http.Request, p *RequestParam, t string) *http.Request {
 }
 
 func init() {
-	customFormatter := new(log.TextFormatter)
-	customFormatter.DisableTimestamp = true
-	log.SetFormatter(customFormatter)
 }
