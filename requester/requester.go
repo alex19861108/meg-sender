@@ -130,7 +130,7 @@ func (b *Work) Run() {
 	}
 
 	b.results = make(chan *result)
-	b.stopCh = make(chan struct{}, 1000)
+	b.stopCh = make(chan struct{}, b.C)
 	b.startTime = time.Now()
 	b.report = newReport(b.writer(), b.results, b.Output)
 	b.report.start()
@@ -140,8 +140,11 @@ func (b *Work) Run() {
 }
 
 func (b *Work) Finish() {
-	b.stopCh <- struct{}{}
+	for i := 0; i < b.C; i++ {
+		b.stopCh <- struct{}{}
+	}
 	close(b.results)
+	b.results = nil
 
 	b.report.stop()
 }
@@ -179,8 +182,10 @@ func (b *Work) makeRequest(c *http.Client, p *RequestParam) {
 	}
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
 	resp, err := c.Do(req)
-	if err == nil {
+	if resp != nil {
 		defer resp.Body.Close()
+	}
+	if err == nil {
 		size = resp.ContentLength
 		code = resp.StatusCode
 		body := &bytes.Buffer{}
@@ -201,7 +206,9 @@ func (b *Work) makeRequest(c *http.Client, p *RequestParam) {
 	t := time.Now()
 	resDuration = t.Sub(resStart)
 	finish := t.Sub(s)
-	b.results <- &result{
+
+	select {
+	case b.results <- &result{
 		statusCode:    code,
 		duration:      finish,
 		err:           err,
@@ -211,6 +218,8 @@ func (b *Work) makeRequest(c *http.Client, p *RequestParam) {
 		reqDuration:   reqDuration,
 		resDuration:   resDuration,
 		delayDuration: delayDuration,
+	}:
+	default:
 	}
 }
 
@@ -247,10 +256,10 @@ func (b *Work) runWorker(n int, widx int) {
 		cli := deepcopy.Copy(*client)
 		cliObj, ok := cli.(http.Client)
 		if ok {
-			if n > 0 {
-				b.asyncSendN(widx, n, throttle, cliObj)
-			} else {
+			if b.PerformanceTimeout > 0 {
 				b.asyncSend(throttle, cliObj)
+			} else {
+				b.asyncSendN(widx, n, throttle, cliObj)
 			}
 		}
 	} else {
@@ -258,10 +267,10 @@ func (b *Work) runWorker(n int, widx int) {
 		cli := deepcopy.Copy(*client)
 		cliObj, ok := cli.(http.Client)
 		if ok {
-			if n > 0 {
-				b.syncSendN(widx, n, throttle, cliObj)
-			} else {
+			if b.PerformanceTimeout > 0 {
 				b.syncSend(throttle, cliObj)
+			} else {
+				b.syncSendN(widx, n, throttle, cliObj)
 			}
 		}
 	}
@@ -273,8 +282,13 @@ func (b *Work) syncSendN(widx int, n int, throttle <-chan time.Time, client http
 		if b.QPS > 0 {
 			<-throttle
 		}
-		requestParam := b.getRequestParam(i*b.C + widx)
-		b.makeRequest(&client, &requestParam)
+		select {
+		case <-b.stopCh:
+			break
+		default:
+			requestParam := b.getRequestParam(i*b.C + widx)
+			b.makeRequest(&client, &requestParam)
+		}
 	}
 }
 
@@ -287,8 +301,13 @@ func (b *Work) syncSend(throttle <-chan time.Time, client http.Client) {
 		if b.QPS > 0 {
 			<-throttle
 		}
-		requestParam := b.getRequestParam(i)
-		b.makeRequest(&client, &requestParam)
+		select {
+		case <-b.stopCh:
+			break
+		default:
+			requestParam := b.getRequestParam(i)
+			b.makeRequest(&client, &requestParam)
+		}
 	}
 }
 
@@ -300,9 +319,14 @@ func (b *Work) asyncSendN(widx int, n int, throttle <-chan time.Time, client htt
 		if b.QPS > 0 {
 			<-throttle
 		}
-		requestParam := b.getRequestParam(i*b.C + widx)
 		go func() {
-			b.makeRequest(&client, &requestParam)
+			select {
+			case <-b.stopCh:
+				break
+			default:
+				requestParam := b.getRequestParam(i*b.C + widx)
+				b.makeRequest(&client, &requestParam)
+			}
 			wg.Done()
 		}()
 	}
@@ -320,9 +344,14 @@ func (b *Work) asyncSend(throttle <-chan time.Time, client http.Client) {
 		if b.QPS > 0 {
 			<-throttle
 		}
-		requestParam := b.getRequestParam(i)
 		go func() {
-			b.makeRequest(&client, &requestParam)
+			select {
+			case <-b.stopCh:
+				break
+			default:
+				requestParam := b.getRequestParam(i)
+				b.makeRequest(&client, &requestParam)
+			}
 			wg.Done()
 		}()
 	}

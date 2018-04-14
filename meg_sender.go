@@ -20,6 +20,7 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"net/http"
 	gourl "net/url"
 	"os"
@@ -27,11 +28,9 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/alex19861108/meg-sender/requester"
-	//"github.com/rakyll/hey/requester"
-
-	"time"
 )
 
 const (
@@ -48,14 +47,14 @@ var (
 	contentType = flag.String("C", "text/html", "")
 	authHeader  = flag.String("a", "", "")
 	hostHeader  = flag.String("host", "", "")
-	dataType    = flag.String("f", "FORM", "")
+	dataType    = flag.String("f", "TEXT", "")
 	output      = flag.String("o", "", "")
 
 	qps = flag.Int("qps", 0, "")
 	c   = flag.Int("c", 50, "")
 	n   = flag.Int("n", 0, "")
-	T   = flag.Int("T", 60, "")
 	t   = flag.Int("t", 0, "")
+	T   = flag.Int("T", 60, "")
 
 	h2   = flag.Bool("h2", false, "")
 	cpus = flag.Int("cpus", runtime.GOMAXPROCS(-1), "")
@@ -77,7 +76,7 @@ Options:
   -n    Number of requests to run. Default is [0].
   -t    Timeout for all request in seconds. Default is [0].
 
-  -f    POST data type, one of JSON, FORM, OPTIONS.
+  -f    POST data type, one of TEXT, JSON, FORM, OPTIONS. Default is [TEXT]
 
   -c    Number of concurrent workers to run. Total number of requests cannot
         be smaller than the concurrency level. Default is [50].
@@ -133,15 +132,23 @@ func main() {
 		usageAndExit("-c cannot be smaller than 1.")
 	}
 
-	if num <= 0 && *t <= 0 {
-		usageAndExit("-n and -t cannot be 0 at the same time.")
-	}
-	if num > 0 && *t > 0 {
-		usageAndExit("-n and -t cannot be not 0 at the same time.")
+	if *t > 0 {
+		num = math.MaxInt32
+		if num <= conc {
+			usageAndExit("-c cannot be smaller than 1.")
+		}
+	} else {
+		if num <= 0 || conc <= 0 {
+			usageAndExit("-n and -c cannot be smaller than 1.")
+		}
+
+		if num < conc {
+			usageAndExit("-n cannot be less than -c.")
+		}
 	}
 
-	if num > 0 && num < conc {
-		usageAndExit("-n cannot be less than -c.")
+	if *async && qps <= 0 {
+		usageAndExit("when async is set, qps is required.")
 	}
 
 	url := flag.Args()[0]
@@ -259,6 +266,7 @@ func main() {
 		w.Finish()
 		os.Exit(1)
 	}()
+
 	w.Run()
 }
 

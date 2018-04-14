@@ -17,7 +17,7 @@ func init() {
 	if err != nil {
 		log.Fatalln("打开日志文件失败：", err)
 	}
-	Info = log.New(os.Stdout, "", 0)
-	Warning = log.New(os.Stdout, "", 0)
+	Info = log.New(io.MultiWriter(os.Stdout), "", 0)
+	Warning = log.New(io.MultiWriter(os.Stdout), "", 0)
 	Error = log.New(io.MultiWriter(os.Stderr, errFile), "", log.Ldate|log.Ltime|log.Lshortfile)
 }
